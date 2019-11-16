@@ -8,6 +8,7 @@ use tantivy::query::QueryParser;
 use tantivy::schema::Field;
 use tantivy::schema::FieldType;
 use tantivy::Index;
+use tantivy::DocAddress;
 
 pub fn run_search_cli(matches: &ArgMatches) -> Result<(), String> {
     let index_directory = PathBuf::from(matches.value_of("index").unwrap());
@@ -40,6 +41,9 @@ fn run_search(directory: &Path, query: &str) -> tantivy::Result<()> {
         let store_reader = segment_reader.get_store_reader();
         while scorer.advance() {
             let doc_id = scorer.doc();
+            let j = query.explain(&searcher, DocAddress(0u32, doc_id))?.to_pretty_json();
+            println!("{}", j);
+            // dbg!(query.explain(&searcher, DocAddress(0u32, doc_id))?.to_pretty_json());
             let doc = store_reader.get(doc_id)?;
             let named_doc = schema.to_named_doc(&doc);
             println!("{}", serde_json::to_string(&named_doc).unwrap());
