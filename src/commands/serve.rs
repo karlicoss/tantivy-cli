@@ -38,6 +38,7 @@ use tantivy::{DocAddress, Score};
 use tantivy::Document;
 use tantivy::Index;
 use tantivy::IndexReader;
+use tantivy::SnippetGenerator;
 use crate::timer::TimerTree;
 use urlencoded::UrlEncodedQuery;
 
@@ -57,11 +58,18 @@ struct Serp {
     timings: TimerTree,
 }
 
+/// Represents highlight positions for a single snippet
+#[derive(Debug, Serialize)]
+struct Highlighted {
+    positions: Vec<(usize, usize)>,
+}
+
 #[derive(Serialize)]
 struct Hit {
     score: Score,
     doc: NamedFieldDocument,
     id: u32,
+    highlights: Vec<Highlighted>,
 }
 
 struct IndexServer {
@@ -104,11 +112,21 @@ impl IndexServer {
         }
     }
 
-    fn create_hit(&self, score: Score, doc: &Document, doc_address: DocAddress) -> Hit {
+    fn create_hit(&self, score: Score, doc: &Document, doc_address: DocAddress, snippet_generator: &SnippetGenerator) -> Hit {
+        let snippets = snippet_generator.snippets_from_doc(&doc);
+        let highlights = snippets
+            .into_iter()
+            .map(|snippet| {
+                Highlighted {
+                    positions: snippet.highlighted().iter().map(|h| h.bounds()).collect(),
+                }
+            })
+            .collect();
         Hit {
             score,
             doc: self.schema.to_named_doc(&doc),
             id: doc_address.doc(),
+            highlights: highlights,
         }
     }
 
@@ -123,13 +141,18 @@ impl IndexServer {
             let _search_timer = timer_tree.open("search");
             searcher.search(&query, &(TopDocs::with_limit(num_hits), Count))?
         };
+
+        // TODO need to think how to make it generic for CLI?
+        let body = self.schema.get_field("body").unwrap();
+        let snippet_generator = SnippetGenerator::create(&searcher, &*query, body)?;
+
         let hits: Vec<Hit> = {
             let _fetching_timer = timer_tree.open("fetching docs");
             top_docs
                 .iter()
                 .map(|(score, doc_address)| {
                     let doc: Document = searcher.doc(*doc_address).unwrap();
-                    self.create_hit(*score, &doc, *doc_address)
+                    self.create_hit(*score, &doc, *doc_address, &snippet_generator)
                 })
                 .collect()
         };
